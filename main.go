@@ -3,7 +3,6 @@ package main
 import (
 	"bytes"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -53,6 +52,7 @@ type AlertStatus struct {
 	Active      bool
 	MessageTS   string
 	LastUpdated time.Time
+	WasAlerting bool // Track if we were previously alerting
 }
 
 var (
@@ -199,12 +199,11 @@ func checkHost(host Host) {
 
 // PingResult represents the result of a ping operation
 type PingResult struct {
-	Success  bool
-	Duration time.Duration
-	Error    error
+       Success  bool
+       Duration time.Duration
+       Error    error
 }
 
-// pingHost uses the system's ping command for better reliability
 func pingHost(ip string) bool {
 	log.Printf("Pinging %s with timeout %d seconds", ip, config.Ping.TimeoutSeconds)
 
@@ -221,7 +220,6 @@ func pingHost(ip string) bool {
 	return false
 }
 
-// doPing executes the system's ping command
 func doPing(ip string) PingResult {
 	var cmd *exec.Cmd
 
@@ -276,7 +274,7 @@ func doPing(ip string) PingResult {
 	return PingResult{
 		Success:  true,
 		Duration: 0,
-		Error:    errors.New("ping succeeded but couldn't parse RTT"),
+		Error:    nil,
 	}
 }
 
@@ -322,11 +320,23 @@ func sendConsolidatedAlert() {
 		}
 	}
 
+	// Check if we transitioned from alerting to all hosts up
+	wasAlerting := alertStatus.WasAlerting
+	alertStatus.WasAlerting = len(downHosts) > 0
+
 	// Send alert if there are new down hosts or if we need to update existing alert
-	if len(hostsToAlert) > 0 || len(downHosts) > 0 {
+	if len(hostsToAlert) > 0 || len(downHosts) > 0 || (wasAlerting && !alertStatus.WasAlerting) {
 		log.Printf("Preparing to send/update Slack alert for %d host(s)", len(downHosts))
-		message := createSlackMessage(downHosts)
-		go sendSlackMessage(message)
+
+		// Special case: all hosts are now operational
+		if len(downHosts) == 0 && wasAlerting {
+			log.Println("All hosts are now operational - sending recovery message")
+			message := createRecoveryMessage()
+			go sendSlackMessage(message)
+		} else {
+			message := createSlackMessage(downHosts)
+			go sendSlackMessage(message)
+		}
 	} else {
 		log.Println("No alert conditions detected")
 	}
@@ -353,6 +363,19 @@ func createSlackMessage(downHosts map[string]bool) string {
 	buffer.WriteString("\n*Last updated:* " + time.Now().Format(time.RFC3339))
 
 	log.Println("Slack message created successfully")
+	return buffer.String()
+}
+
+func createRecoveryMessage() string {
+	log.Println("Creating recovery message")
+
+	var buffer bytes.Buffer
+	buffer.WriteString("🎉 *All Systems Go!* 🎉\n\n")
+	buffer.WriteString("*All previously down hosts are now operational.*\n\n")
+	buffer.WriteString("Monitoring will continue and I'll alert if any issues are detected.\n\n")
+	buffer.WriteString("*Last updated:* " + time.Now().Format(time.RFC3339))
+
+	log.Println("Recovery message created successfully")
 	return buffer.String()
 }
 
