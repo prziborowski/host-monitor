@@ -32,6 +32,9 @@ type Config struct {
 		MaxFailures       int `json:"max_failures"`
 		CheckIntervalSecs int `json:"check_interval_seconds"`
 	} `json:"ping"`
+	StatusUpdate struct {
+		IntervalHours int `json:"interval_hours"`
+	} `json:"status_update"`
 }
 
 // Host represents a host to monitor
@@ -71,11 +74,20 @@ func main() {
 	log.Println("Starting Host Monitoring Application")
 
 	// Load configuration
-	log.Println("Loading configuration from config/hosts.json")
-	if err := loadConfig("config/hosts.json"); err != nil {
+	configPath := os.Getenv("CONFIG_PATH")
+	if configPath == "" {
+		configPath = "config/hosts.json"
+	}
+	log.Printf("Loading configuration from %s", configPath)
+	if err := loadConfig(configPath); err != nil {
 		log.Fatalf("Error loading config: %v", err)
 	}
 	log.Printf("Successfully loaded configuration for %d hosts", len(config.Hosts))
+
+	if slackAPIKey := os.Getenv("SLACK_API_KEY"); slackAPIKey != "" {
+		config.Slack.APIKey = slackAPIKey
+		log.Println("Overriding Slack API key from SLACK_API_KEY env var")
+	}
 
 	// Initialize Slack client
 	slackClient = slack.New(config.Slack.APIKey)
@@ -95,6 +107,12 @@ func main() {
 	// Start monitoring
 	log.Println("Starting host monitoring routine")
 	go monitorHosts()
+
+	// Start periodic status update
+	if config.StatusUpdate.IntervalHours > 0 {
+		log.Printf("Starting periodic status updates every %d hours", config.StatusUpdate.IntervalHours)
+		go periodicStatusUpdate()
+	}
 
 	// Print configuration summary
 	printConfigSummary()
@@ -170,6 +188,46 @@ func monitorHosts() {
 	}
 }
 
+func periodicTick() {
+	log.Println("Periodic status update triggered")
+
+	// Only update if we're not currently alerting
+	downHostsMutex.Lock()
+	hasDownHosts := len(downHosts) > 0
+	downHostsMutex.Unlock()
+
+	if !hasDownHosts && alertStatus.Active {
+		log.Println("No active alerts - sending periodic status update")
+		message := createRecoveryMessage()
+		go sendSlackMessage(message)
+	} else if !hasDownHosts {
+		message := createRecoveryMessage()
+		go sendSlackMessage(message)
+	} else {
+		log.Println("Skipping periodic update - active alerts present")
+	}
+
+}
+
+func periodicStatusUpdate() {
+	ticker := time.NewTicker(time.Duration(config.StatusUpdate.IntervalHours) * time.Hour)
+	defer ticker.Stop()
+
+	periodicTick()
+
+	log.Println("Starting periodic status update routine")
+
+	for {
+		select {
+		case <-ticker.C:
+			periodicTick()
+		case <-shutdownChan:
+			log.Println("Periodic status update routine shutting down")
+			return
+		}
+	}
+}
+
 func checkHost(host Host) {
 	log.Printf("Checking host: %s (%s)", host.Name, host.IP)
 
@@ -199,9 +257,9 @@ func checkHost(host Host) {
 
 // PingResult represents the result of a ping operation
 type PingResult struct {
-       Success  bool
-       Duration time.Duration
-       Error    error
+	Success  bool
+	Duration time.Duration
+	Error    error
 }
 
 func pingHost(ip string) bool {
@@ -281,7 +339,6 @@ func doPing(ip string) PingResult {
 func sendConsolidatedAlert() {
 	downHostsMutex.Lock()
 	defer downHostsMutex.Unlock()
-
 	log.Println("Evaluating hosts for alert conditions")
 
 	// Check for new down hosts
@@ -320,23 +377,37 @@ func sendConsolidatedAlert() {
 		}
 	}
 
-	// Check if we transitioned from alerting to all hosts up
+	// Check if we transitioned from recovery to alert
 	wasAlerting := alertStatus.WasAlerting
 	alertStatus.WasAlerting = len(downHosts) > 0
 
-	// Send alert if there are new down hosts or if we need to update existing alert
+	// Special handling for transition from recovery to alert
+	if !wasAlerting && len(hostsToAlert) > 0 {
+		log.Println("Transitioning from recovery to alert - posting new message")
+		// Clear the existing alert status to force a new message
+		alertMutex.Lock()
+		alertStatus.Active = false
+		alertStatus.MessageTS = ""
+		alertMutex.Unlock()
+
+		message := createSlackMessage(downHosts)
+		go sendSlackMessage(message)
+		return // Skip the normal update logic for this case
+	}
+
+	// Normal update logic for other cases
 	if len(hostsToAlert) > 0 || len(downHosts) > 0 || (wasAlerting && !alertStatus.WasAlerting) {
+		var message string
 		log.Printf("Preparing to send/update Slack alert for %d host(s)", len(downHosts))
 
 		// Special case: all hosts are now operational
 		if len(downHosts) == 0 && wasAlerting {
 			log.Println("All hosts are now operational - sending recovery message")
-			message := createRecoveryMessage()
-			go sendSlackMessage(message)
+			message = createRecoveryMessage()
 		} else {
-			message := createSlackMessage(downHosts)
-			go sendSlackMessage(message)
+			message = createSlackMessage(downHosts)
 		}
+		go sendSlackMessage(message)
 	} else {
 		log.Println("No alert conditions detected")
 	}
@@ -371,7 +442,14 @@ func createRecoveryMessage() string {
 
 	var buffer bytes.Buffer
 	buffer.WriteString("🎉 *All Systems Go!* 🎉\n\n")
-	buffer.WriteString("*All previously down hosts are now operational.*\n\n")
+	buffer.WriteString("*All hosts are operational.*\n\n")
+
+	// Add information about periodic updates if configured
+	if config.StatusUpdate.IntervalHours > 0 {
+		buffer.WriteString(fmt.Sprintf("*This message will be updated every %d hours to confirm the monitor is still running.*\n",
+			config.StatusUpdate.IntervalHours))
+	}
+
 	buffer.WriteString("Monitoring will continue and I'll alert if any issues are detected.\n\n")
 	buffer.WriteString("*Last updated:* " + time.Now().Format(time.RFC3339))
 

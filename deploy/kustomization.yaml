@@ -1,0 +1,18 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# Core resources (always applied).
+resources:
+  - configmap.yaml
+  - deployment.yaml
+  # OPTIONAL hardening: apply this to keep the Slack token out of the ConfigMap.
+  # Also enable the SLACK_API_KEY env block in deployment.yaml when using this.
+  # - secret.yaml
+
+# OPTIONAL: override the image tag/registry without editing deployment.yaml.
+# Example:
+# images:
+#   - name: host-monitor
+#     newTag: v1.2.3
+#   - name: host-monitor
+#     newName: myregistry.example.com/host-monitor

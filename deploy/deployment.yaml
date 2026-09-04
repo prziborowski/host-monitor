@@ -1,0 +1,74 @@
+# host-monitor is a long-running daemon that pings hosts and posts to Slack.
+# It has NO HTTP port, so no Service/Ingress is needed, and there is no
+# readiness/liveness probe to define (no endpoint to check).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: host-monitor
+  labels:
+    app: host-monitor
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: host-monitor
+  template:
+    metadata:
+      labels:
+        app: host-monitor
+    spec:
+      # Pod-level security: run as non-root (uid/gid 1000), fsGroup 1000 so the
+      # mounted /config volume is owned correctly.
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+      containers:
+        - name: host-monitor
+          # Default image reference. To use a registry instead of a local image,
+          # point this at your registry, e.g. myregistry.example.com/host-monitor:latest,
+          # or override the tag via kustomization.yaml `images:` (see that file).
+          image: "host-monitor:latest"
+          imagePullPolicy: IfNotPresent
+          env:
+            # Config is mounted from the ConfigMap at /config/hosts.json.
+            - name: CONFIG_PATH
+              value: /config/hosts.json
+            # OPTIONAL hardening: enable this to leave slack.api_key BLANK in the
+            # ConfigMap and inject the token from the Secret instead.
+            # - name: SLACK_API_KEY
+            #   valueFrom:
+            #     secretKeyRef:
+            #       name: host-monitor-secret
+            #       key: slack-api-key
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            # NET_RAW is required for the ICMP raw socket that ping uses.
+            # Note: some CNI plugins / Kubernetes NetworkPolicies may block ICMP,
+            # which would prevent pings from reaching the target hosts.
+            capabilities:
+              add:
+                - "NET_RAW"
+          # Small footprint; tune as needed for your environment.
+          resources:
+            requests:
+              cpu: 50m
+              memory: 32Mi
+            limits:
+              cpu: 200m
+              memory: 64Mi
+          volumeMounts:
+            - name: config
+              mountPath: /config
+              readOnly: true
+            # /tmp must be writable because readOnlyRootFilesystem is enabled.
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: config
+          configMap:
+            name: host-monitor
+        - name: tmp
+          emptyDir: {}
