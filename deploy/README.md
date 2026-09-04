@@ -10,10 +10,17 @@ can apply them with plain `kubectl apply -f` — **no `kustomize` binary
 required.** The `kustomization.yaml` is only an optional convenience for those
 who do have kustomize.
 
+**Namespace:** all resources are deployed into a dedicated `host-monitor`
+namespace so they stay organized together instead of landing in `default`. The
+namespace is created automatically for you — by `deploy/namespace.yaml`, by
+`apply.sh` (which applies it first), and by `kustomization.yaml` (via its
+top-level `namespace:`).
+
 Files in this directory:
 
 | File              | Purpose                                                         |
 | ---------------- | -------------------------------------------------------------- |
+| `namespace.yaml`| The dedicated `host-monitor` namespace all resources land in.    |
 | `configmap.yaml` | Config (hosts, Slack, ping, status_update) as `hosts.json`.     |
 | `secret.yaml`     | **Optional** hardening: Slack token kept out of the ConfigMap. |
 | `deployment.yaml` | The Deployment (1 replica, non-root, `NET_RAW`).                |
@@ -73,7 +80,11 @@ Then edit the placeholder values (`xoxb-REPLACE-ME`, IPs, channel, ...) in
 
 **Default path — no kustomize, just `kubectl apply -f`:**
 
+Each manifest now carries `namespace: host-monitor` in its metadata, so create
+the namespace first and `kubectl apply -f` lands the rest in the right place:
+
 ```bash
+kubectl apply -f deploy/namespace.yaml
 kubectl apply -f deploy/configmap.yaml -f deploy/deployment.yaml
 
 # plus this ONLY if you are using the optional Secret:
@@ -119,9 +130,9 @@ blank in the ConfigMap.
 - **Viewing logs:**
 
   ```bash
-  kubectl logs -f deploy/host-monitor
+  kubectl logs -f deploy/host-monitor -n host-monitor
   # or by label:
-  kubectl logs -f -l app=host-monitor
+  kubectl logs -f -l app=host-monitor -n host-monitor
   ```
 
 - **Updating config:** edit `configmap.yaml` (and re-run

@@ -5,6 +5,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: host-monitor
+  namespace: host-monitor
   labels:
     app: host-monitor
 spec:
