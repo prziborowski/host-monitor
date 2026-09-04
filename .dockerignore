@@ -1,0 +1,21 @@
+# Secret config — contains a live Slack bot token; never in the build context.
+config/
+# (Explicitly excluded above; critical.)
+# config/hosts.json
+
+# Prebuilt binary — built fresh in the image, never copied from host.
+host-monitor
+
+# VCS metadata.
+.git/
+
+# Logs.
+*.log
+
+# Editor / IDE / tooling.
+.kilo/
+*.sw?
+
+# Deployment and helper scripts — not needed for the image.
+deploy/
+scripts/

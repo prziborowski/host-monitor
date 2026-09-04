@@ -24,5 +24,8 @@
     "timeout_seconds": 3,
     "max_failures": 5,
     "check_interval_seconds": 60
+  },
+  "status_update": {
+    "interval_hours": 1
   }
 }

@@ -1,0 +1,10 @@
+# Dedicated namespace for all host-monitor resources.
+#
+# apply.sh and the kustomization both target this namespace so the ConfigMap,
+# Secret, and Deployment land together instead of in `default`.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: host-monitor
+  labels:
+    app: host-monitor

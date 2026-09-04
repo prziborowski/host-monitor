@@ -160,3 +160,21 @@ MIT License - see LICENSE file for details.
 ## Contributing
 
 Contributions are welcome! Please open an issue or pull request on GitHub.
+
+## Deployment (Docker / Kubernetes)
+
+The app runs as a plain daemon (no HTTP port, no Service needed). Kubernetes
+manifests and a step-by-step guide live in the `deploy/` directory:
+
+1. **Build & push** the image (tag it however you like, e.g.
+   `docker build -t host-monitor:latest .` then `docker push ...`).
+2. **Generate config** from `config/hosts.json` with `scripts/convert-config.sh`
+   (use `--split-secret` to move the Slack token into a Secret).
+3. **Apply**: `kubectl apply -k deploy/` (or the manual
+   `kubectl apply -f deploy/configmap.yaml -f deploy/deployment.yaml`).
+
+Key points: the container needs the `NET_RAW` capability (ICMP raw socket) and
+runs as non-root; some CNI/NetworkPolicies may block ICMP; and the Slack token
+is sensitive, so prefer the optional Secret path in production.
+
+Full details are in [`deploy/README.md`](deploy/README.md).
